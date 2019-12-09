@@ -2,6 +2,7 @@ package com.newland.intelligentserver;
 
 import android.content.Context;
 import android.hardware.Camera;
+import android.hardware.Camera.Size;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.newland.AnalogSerialManager;
@@ -18,6 +19,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -35,6 +37,7 @@ import android.newland.scan.ScanUtil;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Message;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -60,6 +63,7 @@ import com.newland.intelligentserver.ndk.ShowMessage;
 import android.view.View.OnClickListener;
 //import com.newland.ndk.JniNdk;
 
+import android.newland.scan.SoftEngine;
 
 public class TestLocalSocketActivity extends Activity implements ConstJdk{
 
@@ -74,6 +78,7 @@ public class TestLocalSocketActivity extends Activity implements ConstJdk{
     private SurfaceView mView;
     private SurfaceHolder mHolder;
     private BackBean mBackBean = new BackBean();
+    private Camera mCamera;
 
     private TextView view;
 	private TextView logView;
@@ -84,6 +89,14 @@ public class TestLocalSocketActivity extends Activity implements ConstJdk{
     public MyButtonlistener mButtonListener;
     public ShowMessage mShowMessage;
     public WorkHandler mWorkHandler;
+    private int mCurrZoom = 0;
+    private SurfaceHolder mSurfaceHolder = null;
+    protected SurfaceView surfaceView;
+    private SoftEngine mSoftEngine;
+    int flag =-100;
+    int width, height;
+    byte[] data;
+    String strResult;
 
 
     static {System.loadLibrary("loadNl");}
@@ -94,16 +107,49 @@ public class TestLocalSocketActivity extends Activity implements ConstJdk{
         {
             switch (msg.what){
                 case 1001:
+                case 4001:
                     mView.setVisibility(View.VISIBLE);
                     LoggerUtil.v("扫码框可见" );
                     break;
                 case 1002:
+                case 4002:
                     mView.setVisibility(View.GONE);
                     LoggerUtil.v("扫码框不可见" );
                     break;
 				case 1003:
                     logView.append(logStr);
 //                    scrollView.fullScroll(ScrollView.FOCUS_DOWN);
+                    break;
+                case 1102:
+                    Log.d("eric", "MSG_SEND_SCAN_RESULT-结束解码-----");
+                    String strResult = (String)msg.obj;
+                    /*if (softEngine != null){
+                        Log.d("eric", "MSG_SEND_SCAN_RESULT-结束解码-----");
+                        softEngine.stopDecode();
+                    }
+                    String strResult = (String)msg.obj;
+                    rescodeString=strResult;
+                    if(strResult!=null)
+                    {
+//	                      	gui.cls_show_msg1(1, "扫码结果为%s", strResult);
+                        SystemClock.sleep(100);
+                        Log.d("eric", "MSG_SEND_SCAN_RESULT-扫码结果: "+strResult);
+
+                    }*/
+                    break;
+                case 1101:
+                    width = msg.arg1;
+                    height  = msg.arg2;
+                    data = (byte[]) msg.obj;
+                    Log.d("eric", "step  6--handler:1101  data:"+data);
+                    mSoftEngine.startDecode(data, width, height);
+                    /*if (softEngine != null){
+                        Log.d("eric", "MSG_DECODE-解码---------------");
+
+                        if(!(softEngine.startDecode(data, width, height))){
+                            gui.cls_show_msg1_record(TESTITEM, "Scan29",5, "line %d:StartDecode失败（time==%d）", Tools.getLineInfo());
+                        }
+                    }*/
                     break;
             }
         };
@@ -117,7 +163,6 @@ public class TestLocalSocketActivity extends Activity implements ConstJdk{
         /*-----------------------------------*/
         @Override
         public void handleMessage(Message msg){
-            int ret;
             switch ( msg.what) {
                 case EVENT_SHOW_MESSAGE:
                     tv_prompt_info.setText((String)msg.obj);
@@ -342,33 +387,31 @@ public class TestLocalSocketActivity extends Activity implements ConstJdk{
         }.start();
     }
 
-
-
     //通过接口名反射调用jdk接口,执行JDK接口操作
     public byte[] refectJDK(byte[] inData,int inlen)
     {
-        g_Ret =0;
-        int jdk_commandid=Tools.byteArrayToInt(Tools.subBytes(inData,0,4));//方法名id
+        g_Ret = 0;
+        int jdk_commandid = Tools.byteArrayToInt(Tools.subBytes(inData,0,4));//方法名id
         LoggerUtil.v("jdk_commandid："+jdk_commandid );
         //一般接口通过反射，得到参数列表
-        List<Object> classList=null,paraList=null;//存放参数类型,存放参数数据
-        int startlen=4;
+        List<Object> classList = null, paraList = null;//存放参数类型,存放参数数据
+        int startlen = 4;
         LoggerUtil.d("startLen="+startlen+",inlen="+inlen);
         while(startlen<inlen)
         {
-            if(classList==null)
-                classList=new ArrayList<Object> ();
-            if(paraList==null)
-                paraList=new ArrayList<Object> ();
-            Object type=unpack(inData,startlen);
+            if(classList == null)
+                classList = new ArrayList<Object> ();
+            if(paraList == null)
+                paraList = new ArrayList<Object> ();
+            Object type = unpack(inData,startlen);
             classList.add(type);
             paraList.add(paraContent);
-            startlen=startlen+typeOfLength+1;
+            startlen = startlen + typeOfLength + 1;
             LoggerUtil.d("type="+type.toString()+",paraContent="+paraContent);
         }
         Object cla = null;
         LoggerUtil.v("开始判断jdk_commandid");
-        if(jdk_commandid==13000)// 扫码的NLS构造方法，调用完毕后直接返回
+        if(jdk_commandid == 13000)// 扫码的NLS构造方法，调用完毕后直接返回
         {
 //            if(JdkCommandId.gHash_obj.get(JdkCommandId.fromCommandId(jdk_commandid)[1])!=null)// 要先释放扫码操作
 //            {
@@ -384,12 +427,53 @@ public class TestLocalSocketActivity extends Activity implements ConstJdk{
             JdkCommandId.gHash_obj.put(JdkCommandId.fromCommandId(jdk_commandid)[1], cla);
             return Tools.byteMerger(Tools.byteCommanid_ret(jdk_commandid, g_Ret),new byte[4]);
         }
-        else if (jdk_commandid==13006)// 扫码初始化后，直接release会导致服务崩溃
+        else if (jdk_commandid == 13006)// 扫码初始化后，直接release会导致服务崩溃
         {
 //            handler.sendEmptyMessage(1002);
             ((ScanUtil)JdkCommandId.gHash_obj.get(JdkCommandId.fromCommandId(13000)[1])).release();
             LoggerUtil.v("扫码release" );
             handler.sendEmptyMessage(1002);
+        }
+        else if (jdk_commandid == 13020)// 扫码新接口的NLS构造方法
+        {
+            LoggerUtil.v("come here新接口开始SoftEngine");
+            handler.sendEmptyMessage(4002);
+            cla = new SoftEngine(this);
+            handler.sendEmptyMessage(4001);
+            LoggerUtil.v("新接口结束SoftEngine");
+            JdkCommandId.gHash_obj.put(JdkCommandId.fromCommandId(jdk_commandid)[1], cla);
+            return Tools.byteMerger(Tools.byteCommanid_ret(jdk_commandid, g_Ret),new byte[4]);
+        }/**/
+        else if (jdk_commandid == 13021)//扫码新接口初始化并获取实例对象
+        {
+            LoggerUtil.v("step  1--新接口扫码getInstance");
+            //mSoftEngine = SoftEngine.getInstance();
+            mSoftEngine = ((SoftEngine)JdkCommandId.gHash_obj.get(JdkCommandId.fromCommandId(13020)[1])).getInstance();
+            createCamera(2, 640, 480);
+            handler.sendEmptyMessage(4001);
+        }
+        else if (jdk_commandid == 13022)//扫码新接口开始解码
+        {
+            SystemClock.sleep(1000);
+            if(data != null) {
+                Log.d("eric", "step  7--startDecode   data:" + data);
+                //mSoftEngine.startDecode(data, (Integer)paraList.get(0), (Integer)paraList.get(1));
+                ((SoftEngine) JdkCommandId.gHash_obj.get(JdkCommandId.fromCommandId(13020)[1])).startDecode(data, (Integer) paraList.get(0), (Integer) paraList.get(1));
+                LoggerUtil.v("扫码新接口开始解码");
+            }
+        }
+        else if (jdk_commandid == 13023)//扫码新接口停止解码
+        {
+            //mSoftEngine.stopDecode();
+            ((SoftEngine)JdkCommandId.gHash_obj.get(JdkCommandId.fromCommandId(13020)[1])).stopDecode();
+            LoggerUtil.v("step  9--stopDecode   扫码结果："+strResult);
+            //handler.sendEmptyMessage(4002);
+        }
+        else if(jdk_commandid == 13024)
+        {
+            LoggerUtil.v("step  4--新接口扫码setScanningCallback");
+            //mSoftEngine.setScanningCallback(scanningCallback);
+            ((SoftEngine)JdkCommandId.gHash_obj.get(JdkCommandId.fromCommandId(13020)[1])).setScanningCallback(scanningCallback);
         }
         else
         {
@@ -596,4 +680,107 @@ public class TestLocalSocketActivity extends Activity implements ConstJdk{
         }
         return Object.class;
     }
+
+    /*@Override
+    public void onDestroy() {
+        // TODO Auto-generated method stub
+        super.onDestroy();
+        if (mSoftEngine != null)
+            mSoftEngine.stopDecode();
+        destoryCamera();
+        if (mSoftEngine != null)
+            mSoftEngine.Deinit();
+    }
+
+    public void destoryCamera()
+    {
+        if (mCamera != null)
+        {
+            Log.d("eric", "destoryCamera-----");
+            mCamera.stopPreview();
+            mCamera.setPreviewCallback(null);
+            mCamera.release();
+            mCamera = null;
+        }
+    }*/
+
+    public void createCamera(int cameraId, int PreviewWidth, int PreviewHeight)
+    {
+        mSurfaceHolder = mView.getHolder();
+        try {
+            Log.d("eric", "step  2--createCamera   id = "+cameraId);
+            mCamera = Camera.open(cameraId);
+            SystemClock.sleep(1000);
+            mCamera.setPreviewCallback(previewCallback);
+            mSoftEngine.setScanningCallback(scanningCallback);
+
+            if (mCamera != null) {
+                Log.d("eric", "step  3--come here：startPreview");
+                //显示预览框
+                mCamera.setPreviewDisplay(mSurfaceHolder);
+                Camera.Parameters parameters = mCamera.getParameters();
+
+                parameters.setPreviewSize(PreviewWidth, PreviewHeight);
+                parameters.setFlashMode(Camera.Parameters.FLASH_MODE_OFF);
+                //设置对焦
+                parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);
+                //设置锐化
+                parameters.set("sharpness", String.valueOf(0));
+                int MaxZoom = parameters.getMaxZoom();
+                if (parameters.isZoomSupported())
+                {
+                    if (mCurrZoom == -1)
+                    {
+                        mCurrZoom = (int)(MaxZoom*0.3);
+                    }
+                    parameters.setZoom(mCurrZoom);
+                }
+
+                parameters.setExposureCompensation(5);
+                List <Size> PreviewSizeList = parameters.getSupportedPreviewSizes();
+                Log.d("eric", "size = "+PreviewSizeList);
+                for (Size size : PreviewSizeList)
+                {
+                    Log.d("eric", "width:"+size.width + " height:"+size.height);
+                }
+
+                mCamera.setParameters(parameters);
+                mCamera.cancelAutoFocus();
+                mCamera.startPreview();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
+        @Override
+        public void onPreviewFrame(byte[] data, Camera camera) {
+            // TODO Auto-generated method stub
+            Log.d("eric", "step  5--进入子类：onPreviewFrame    data:"+data);
+            if (flag != 1) {
+                Message msg = Message.obtain(handler, 1101, 640, 480, data);
+                msg.sendToTarget();
+            }
+        }
+    };
+
+    SoftEngine.ScanningCallback scanningCallback = new SoftEngine.ScanningCallback(){
+        @Override
+        public void onScanningCallback(int eventCode, int param1, byte[] param2, int length) {
+            // TODO Auto-generated method stub
+            //result = eventCode;
+            Log.d("eric", "step  8--进入子类：onScanningCallback    eventCode:"+eventCode);
+            String rescodeString;
+            if (eventCode == 1) {
+                try {
+                    rescodeString = new String(param2, "UTF-8");
+                    Message msg = Message.obtain(handler, 1102, 0, 0, rescodeString);
+                    msg.sendToTarget();
+                }catch (UnsupportedEncodingException e){
+                    e.printStackTrace();
+                }
+            }
+        }
+    };/**/
 }
